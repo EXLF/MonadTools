@@ -15,8 +15,8 @@
 
 1. 克隆仓库：
 ```bash
-git clone <repository-url>
-cd <repository-name>
+git clone https://github.com/EXLF/MonadTools.git
+cd MonadTools
 ```
 
 2. 在浏览器中访问：
@@ -53,6 +53,12 @@ cd <repository-name>
 - 永远不要将你的私钥分享给他人
 - 建议在专用的测试钱包中使用此工具
 - 在进行任何操作前，请仔细核对所有信息
+
+## 作者与社区
+
+- 推特：[@xiao_yi24405](https://x.com/xiao_yi24405)
+- Discord社区：[Four Air](https://discord.gg/cTZCaYefPY)
+- 空投教程：[FOUR AIR 空投指南](https://valley-porkpie-151.notion.site/FOUR-AIR-1b28d09e75b680eb8b0ce426fdcd40a7?pvs=4)
 
 ## 贡献
 
