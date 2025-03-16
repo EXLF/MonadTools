@@ -1,0 +1,16 @@
+{
+  "name": "monad-nft",
+  "version": "1.0.0",
+  "description": "Monad NFT Interaction",
+  "main": "src/mint.js",
+  "scripts": {
+    "mint": "node src/mint.js"
+  },
+  "dependencies": {
+    "axios": "^1.8.3",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.13.5",
+    "web3": "^4.16.0"
+  }
+}
