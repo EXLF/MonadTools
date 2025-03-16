@@ -19,19 +19,8 @@ git clone <repository-url>
 cd <repository-name>
 ```
 
-2. 安装依赖（如果需要启动本地服务器）：
-```bash
-npm install http-server
-```
-
-3. 启动本地服务器：
-```bash
-npx http-server .
-```
-
-4. 在浏览器中访问：
-- http://localhost:8080
-- 或者直接双击打开 index.html 文件
+2. 在浏览器中访问：
+- 直接双击打开 index.html 文件
 
 ## 使用说明
 
