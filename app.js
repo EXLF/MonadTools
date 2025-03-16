@@ -5,6 +5,10 @@ class NFTMinter {
             {"inputs":[{"type":"address"},{"type":"uint256"},{"type":"uint256"},{"type":"bytes"}],"name":"mint","outputs":[],"stateMutability":"payable","type":"function"}
         ];
         
+        // 安全相关配置
+        this.KEY_TIMEOUT = 5 * 60 * 1000; // 5分钟后清除私钥
+        this.keyTimeoutId = null;
+        
         // 缓存相关配置
         this.DB_NAME = 'NFTPriceCache';
         this.STORE_NAME = 'prices';
@@ -60,6 +64,9 @@ class NFTMinter {
     async updateWalletInfo() {
         try {
             if (this.privateKeyInput.value) {
+                // 设置私钥自动清除定时器
+                this.setupKeyTimeout();
+                
                 const account = this.web3.eth.accounts.privateKeyToAccount(this.privateKeyInput.value);
                 const balance = await this.web3.eth.getBalance(account.address);
                 const balanceInMON = this.web3.utils.fromWei(balance, 'ether');
@@ -69,6 +76,45 @@ class NFTMinter {
             }
         } catch (error) {
             this.walletInfo.textContent = '无效的私钥';
+        }
+    }
+    
+    // 设置私钥自动清除定时器
+    setupKeyTimeout() {
+        // 清除之前的定时器
+        if (this.keyTimeoutId) {
+            clearTimeout(this.keyTimeoutId);
+        }
+        
+        // 设置新的定时器
+        this.keyTimeoutId = setTimeout(() => {
+            // 只有在没有正在进行的交易时才清除私钥
+            if (!this.minting) {
+                this.privateKeyInput.value = '';
+                this.walletInfo.textContent = '私钥已自动清除，请重新输入';
+                this.log('🔒 出于安全考虑，私钥已自动清除', 'info');
+            } else {
+                // 如果正在交易，延迟清除
+                this.setupKeyTimeout();
+            }
+        }, this.KEY_TIMEOUT);
+    }
+    
+    // 安全地获取私钥（不直接返回私钥，而是返回账户对象）
+    getAccount() {
+        try {
+            const privateKey = this.privateKeyInput.value;
+            if (!privateKey) {
+                throw new Error('请输入私钥');
+            }
+            
+            // 重置定时器
+            this.setupKeyTimeout();
+            
+            // 返回账户对象而不是私钥
+            return this.web3.eth.accounts.privateKeyToAccount(privateKey);
+        } catch (error) {
+            throw new Error('无效的私钥: ' + error.message);
         }
     }
     
@@ -287,20 +333,24 @@ class NFTMinter {
             this.log('开始mint流程...');
             
             // 验证输入
-            const privateKey = this.privateKeyInput.value;
             const contractAddress = this.nftAddressInput.value;
             const amount = parseInt(this.quantityInput.value);
             
-            if (!privateKey || !contractAddress || amount <= 0) {
+            if (!contractAddress || amount <= 0) {
                 throw new Error('请填写所有必需的字段');
             }
             
-            // 添加账户
-            const account = this.web3.eth.accounts.privateKeyToAccount(privateKey);
+            // 安全地获取账户对象
+            const account = this.getAccount();
             this.web3.eth.accounts.wallet.add(account);
             
-            // 并行处理：同时获取价格和预设gas价格
-            const [priceInWei, gasPrice] = await Promise.all([
+            // 获取当前网络Gas价格
+            const baseGasPrice = this.web3.utils.toWei('50', 'gwei'); // 基础Gas价格: 50 Gwei
+            const maxPriorityFee = this.web3.utils.toWei('1.5', 'gwei'); // 最大优先费用: 1.5 Gwei
+            const gasPrice = BigInt(baseGasPrice) + BigInt(maxPriorityFee); // 总Gas价格: 51.5 Gwei
+            
+            // 并行处理：同时获取价格和余额
+            const [priceInWei, balance] = await Promise.all([
                 // 获取价格
                 (async () => {
                     if (this.priceInput.value) {
@@ -315,8 +365,8 @@ class NFTMinter {
                         return price;
                     }
                 })(),
-                // 获取gas价格
-                Promise.resolve(BigInt(this.web3.utils.toWei('50', 'gwei')).toString())
+                // 获取钱包余额
+                this.web3.eth.getBalance(account.address)
             ]);
             
             // 计算总价
@@ -337,7 +387,7 @@ class NFTMinter {
                 value: totalPrice.toString(),
                 data: data,
                 chainId: 10143,
-                gasPrice: gasPrice
+                gasPrice: gasPrice.toString()
             };
             
             // 打印交易信息
@@ -348,14 +398,29 @@ class NFTMinter {
             this.log(`总价: ${this.web3.utils.fromWei(totalPrice.toString(), 'ether')} MON`);
             this.log(`钱包地址: ${account.address}`);
             
-            // 并行处理：同时进行gas估算和钱包余额检查
-            const [gasEstimate, balance] = await Promise.all([
-                this.web3.eth.estimateGas(tx).catch(() => '2000000'),
-                this.web3.eth.getBalance(account.address)
-            ]);
-
-            // 设置gas限制
-            tx.gas = Math.floor(Number(gasEstimate) * 1.2).toString();
+            // 估算Gas
+            let gasEstimate;
+            try {
+                gasEstimate = await this.web3.eth.estimateGas(tx);
+                this.log(`Gas估算成功: ${gasEstimate}`);
+            } catch (error) {
+                // 根据不同的NFT合约类型设置合理的默认值
+                if (error.message.includes('out of gas')) {
+                    gasEstimate = 150000; // 如果是gas不足错误，使用较大的值
+                    this.log('⚠️ Gas估算失败(gas不足)，使用默认值: 150000', 'warning');
+                } else {
+                    // 根据Monad网络上NFT mint的平均Gas消耗设置默认值
+                    gasEstimate = 100000; // 使用更合理的默认值
+                    this.log(`⚠️ Gas估算失败(${error.message})，使用默认值: 100000`, 'warning');
+                }
+            }
+            
+            // 添加20%的Gas缓冲，但设置上限，避免过度浪费
+            const maxGasLimit = 200000; // 设置最大Gas限制
+            const recommendedGas = Math.floor(Number(gasEstimate) * 1.2);
+            tx.gas = Math.min(recommendedGas, maxGasLimit).toString();
+            
+            // 计算Gas成本
             const gasCostInWei = BigInt(tx.gas) * BigInt(gasPrice);
             const gasCostInMON = this.web3.utils.fromWei(gasCostInWei.toString(), 'ether');
             this.log(`预估Gas: ${tx.gas} (约 ${gasCostInMON} MON)`);
@@ -374,6 +439,7 @@ class NFTMinter {
             this.log('Mint成功！', 'success');
             this.log(`交易哈希: ${receipt.transactionHash}`, 'success');
             this.log(`区块号: ${receipt.blockNumber}`, 'success');
+            this.log(`实际Gas使用: ${receipt.gasUsed}`, 'info');
             
             // 更新钱包信息
             await this.updateWalletInfo();
